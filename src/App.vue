@@ -1,11 +1,12 @@
 <script setup lang="ts">
+import { useMachine } from "@xstate/vue";
 import { ref } from "vue";
-import { assign, createMachine, interpret, send } from "xstate";
+import { assign, createMachine, send } from "xstate";
 
 const message = ref<Array<any>>([]);
 const mockWsConnect = () => {
   return new Promise((resolve, reject) => {
-    const isSuccess = Math.random() > 0.5;
+    const isSuccess = Math.random() > 0.2;
     if (isSuccess) {
       const timer = setInterval(() => {
         if (optionState.value.matches({ step: "scanning" })) {
@@ -97,7 +98,14 @@ type OptionMachineContext = {
   isDialogOpen: boolean;
   scanResult: Array<any>;
 };
-const optionMachine = createMachine<OptionMachineContext, OptionMachineEvent>(
+
+// TODO 改进：optionMachine不应该使用any
+// TODO 改进：如果没有扫到标签（stop返回data为空数组或null），clear发现没有缺少，也会使用0或1，而不是2（清除不入库），应该是2。
+
+const optionMachine: any = createMachine<
+  OptionMachineContext,
+  OptionMachineEvent
+>(
   {
     predictableActionArguments: true,
     id: "optionMachine",
@@ -108,7 +116,7 @@ const optionMachine = createMachine<OptionMachineContext, OptionMachineEvent>(
       step: {
         initial: "unready",
         states: {
-          // 未就绪
+          // 未就绪，可以根据此状态判断扫描是否在进行 optionState.value.matches({step:{unready:'idle'}})
           unready: {
             type: "compound",
             initial: "idle",
@@ -146,6 +154,7 @@ const optionMachine = createMachine<OptionMachineContext, OptionMachineEvent>(
                         alert("WebSocket连接失败，请重试");
                         console.log("连接失败");
                       },
+                      send({ type: "end", to: "#optionMachine.method" }),
                     ],
                     target: "idle",
                   },
@@ -170,14 +179,6 @@ const optionMachine = createMachine<OptionMachineContext, OptionMachineEvent>(
                 on: {
                   start: { target: "tryconnnect" },
                   end: [
-                    // {
-                    //   target: "#optionMachine.step.unready",
-                    //   actions: (context) => {
-                    //     // context.ws.close();
-                    //     console.log("关闭ws");
-                    //   },
-                    //   cond: "isWsExist",
-                    // },
                     {
                       target: "#optionMachine.step.unready",
                       actions: [
@@ -211,7 +212,6 @@ const optionMachine = createMachine<OptionMachineContext, OptionMachineEvent>(
                     actions: [
                       () => {
                         alert("开始失败，请重试");
-                        // console.log("start失败请重试");
                       },
                     ],
                   },
@@ -243,16 +243,12 @@ const optionMachine = createMachine<OptionMachineContext, OptionMachineEvent>(
                 {
                   target: "#optionMachine.step.showResult.short",
                   actions: "setShortResult",
-                  // cond: "isResultShort",
-                  // }, {
-                  // target:'continue'
                 },
               ],
               onError: {
                 target: "scanning",
                 actions: () => {
                   alert("暂停失败，请重试");
-                  // console.log("stop失败，请重试");
                 },
               },
             },
@@ -330,6 +326,7 @@ const optionMachine = createMachine<OptionMachineContext, OptionMachineEvent>(
                       return clearScanApi(2);
                     } else {
                       // import 0 ,export 1
+                      // TODO 不能直接获取到状态吗
                       const type =
                         optionState.value.value.method == "import" ? 0 : 1;
                       return clearScanApi(type);
@@ -352,11 +349,12 @@ const optionMachine = createMachine<OptionMachineContext, OptionMachineEvent>(
           },
         },
       },
-      // 平行状态机：出入库类型
+      // 平行状态机：出入库类型，作为clear接口参数依据
       method: {
         type: "compound",
         initial: "idle",
         states: {
+          // 空闲状态，可以根据此状态判断扫描是否在进行 optionState.value.matches({method:'idle'})
           idle: {
             on: {
               import: {
@@ -375,11 +373,13 @@ const optionMachine = createMachine<OptionMachineContext, OptionMachineEvent>(
               },
             },
           },
+          // 入库状态
           import: {
             on: {
               end: { target: "idle" },
             },
           },
+          // 出库状态
           export: {
             on: {
               end: { target: "idle" },
@@ -438,33 +438,34 @@ const optionMachine = createMachine<OptionMachineContext, OptionMachineEvent>(
   }
 );
 
-const stateRecord = ref<any>([]);
-const optionState = ref<any>(getContext());
-// const { state, send }=useMachine(optionMachine);
-const optionServie = interpret(optionMachine)
-  .onTransition((state) => {
-    optionState.value = state;
-    stateRecord.value.push(state.value);
-  })
-  .start();
+// const stateRecord = ref<any>([]);
+// const optionState = ref<any>(getContext());
+// const optionServie = interpret(optionMachine)
+//   .onTransition((state) => {
+//     optionState.value = state;
+//     stateRecord.value.push(state.value);
+//   })
+//   .start();
+// sendEvent=optionServie.send;
+const { state: optionState, send: sendEvent } = useMachine(optionMachine);
 </script>
 
 <template>
   <div>
     <!-- {{ optionState.context }} -->
-    <button @click="optionServie.send(['import'])">开始入库</button>
-    <button @click="optionServie.send(['export'])">开始出库</button>
+    <button @click="sendEvent(['import'])">开始入库</button>
+    <button @click="sendEvent(['export'])">开始出库</button>
     <div
       class=""
       v-if="optionState.matches({ step: { showResult: 'full' } })"
-      @click="optionServie.send('next')"
+      @click="sendEvent('next')"
     >
       扫描成功提示
     </div>
     <div
       class=""
       v-if="optionState.matches({ step: { showResult: 'short' } })"
-      @click="optionServie.send('next')"
+      @click="sendEvent('next')"
     >
       扫描缺失结果
     </div>
@@ -473,47 +474,49 @@ const optionServie = interpret(optionMachine)
       <!-- 会变长是因为存在history，不是bug -->
       <!-- {{ optionState.value }} -->
       <!-- {{ optionState.context.scanResult }} -->
-      <button
-        @click="optionServie.send('start')"
-        v-if="optionState.matches({ step: { ready: 'idle' } })"
-      >
-        开始
-        <!-- {{ optionState.context.buttonText1 }} -->
-      </button>
-      <button
-        @click="optionServie.send('stop')"
-        v-if="optionState.matches({ step: 'scanning' })"
-      >
-        暂停并检查
-      </button>
-      <button
-        @click="optionServie.send('continue')"
-        v-if="optionState.matches({ step: { continue: 'idle' } })"
-      >
-        重新扫描
-      </button>
-      <!-- <button @click="optionServie.send('')">结束</button> -->
-      <button
-        @click="optionServie.send('clear')"
-        v-if="optionState.matches({ step: { clear: 'waitforclear' } })"
-      >
-        清除
-      </button>
-      <button
-        @click="optionServie.send('next')"
-        v-if="optionState.matches({ step: { continue: 'idle' } })"
-      >
-        下一个
-      </button>
-      <button
-        @click="optionServie.send('end')"
-        v-if="optionState.matches({ step: { ready: 'idle' } })"
-      >
-        结束
-      </button>
+      <div class="button-box">
+        <button
+          @click="sendEvent('start')"
+          v-if="optionState.matches({ step: { ready: 'idle' } })"
+        >
+          开始
+          <!-- {{ optionState.context.buttonText1 }} -->
+        </button>
+        <button
+          @click="sendEvent('stop')"
+          v-if="optionState.matches({ step: 'scanning' })"
+        >
+          暂停并检查
+        </button>
+        <button
+          @click="sendEvent('continue')"
+          v-if="optionState.matches({ step: { continue: 'idle' } })"
+        >
+          重新扫描
+        </button>
+        <!-- <button @click="sendEvent('')">结束</button> -->
+        <button
+          @click="sendEvent('clear')"
+          v-if="optionState.matches({ step: { clear: 'waitforclear' } })"
+        >
+          清除
+        </button>
+        <button
+          @click="sendEvent('next')"
+          v-if="optionState.matches({ step: { continue: 'idle' } })"
+        >
+          下一个
+        </button>
+        <button
+          @click="sendEvent('end')"
+          v-if="optionState.matches({ step: { ready: 'idle' } })"
+        >
+          结束
+        </button>
+      </div>
       {{ message }}
     </div>
-    {{ stateRecord }}
+    <!-- {{ stateRecord }} -->
   </div>
 </template>
 
