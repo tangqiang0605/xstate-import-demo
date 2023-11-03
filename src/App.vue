@@ -1,10 +1,9 @@
 <script setup lang="ts">
-// import { useMachine } from "@xstate/vue";
 import { ref } from "vue";
-import { assign, createMachine, interpret } from "xstate";
+import { State, assign, createMachine, interpret } from "xstate";
 
 const message = ref([]);
-const mockWsConnect = (context) => {
+const mockWsConnect = () => {
   return new Promise((resolve, reject) => {
     const isSuccess = Math.random() > 0.2;
     if (isSuccess) {
@@ -17,7 +16,7 @@ const mockWsConnect = (context) => {
         }
         // console.log("接收ws");
         // context.message.push();
-      }, 800);
+      }, 300);
       resolve({ close: () => clearInterval(timer) });
       // setInterval()
     } else {
@@ -25,24 +24,6 @@ const mockWsConnect = (context) => {
     }
   });
 };
-
-// const wsMachine = createMachine({
-//   id: "wsMachine",
-//   states: {
-//     idle: {
-//       on: {
-//         weak: {
-//           target: "working",
-//         },
-//       },
-//     },
-//     working: {
-//       // activities:
-//     },
-//   },
-// });
-
-// useMachine()
 
 const startScanApi = () => {
   return new Promise((resolve, reject) => {
@@ -66,7 +47,6 @@ const continueScanApi = () => {
 };
 
 const clearScanApi = (type: any) => {
-  // console.log(type);
   return new Promise((resolve, reject) => {
     const isSuccess = Math.random() > 0.2;
     if (isSuccess) {
@@ -89,20 +69,15 @@ const stopScanApi = () => {
         });
       } else if (randomNumber > 0.4) {
         resolve({
-          // res: {
           mes: "配置通过",
           data: ["aaa"],
-          // }
         });
       } else {
         resolve({
-          // res: {
           mes: "配置不通过",
           data: ["aaa", { drugCode: 111 }],
-          // }
         });
       }
-      // resolve("start成功");
     } else {
       reject("start失败");
     }
@@ -110,9 +85,7 @@ const stopScanApi = () => {
 };
 const getContext = () => ({
   ws: null,
-  // message: [],
   isDialogOpen: false,
-  // buttonText1: "开始",
   scanResult: [],
 });
 
@@ -140,13 +113,6 @@ const optionMachine = createMachine(
               console.log("尝试连接");
             },
             always: [
-              // {
-              //   target: "wsconnected",
-              //   cond: "isWsExist",
-              //   actions: () => {
-              //     console.log("复用连接");
-              //   },
-              // },
               {
                 target: "wsconnecting",
                 actions: () => {
@@ -157,12 +123,10 @@ const optionMachine = createMachine(
           },
           wsconnecting: {
             invoke: {
-              src: (context) => mockWsConnect(context),
+              src: mockWsConnect,
               onDone: {
                 target: "wsconnected",
-                actions: assign({
-                  ws: (context, event) => event.data,
-                }),
+                actions: "setWs",
               },
               onError: {
                 actions: () => {
@@ -184,14 +148,12 @@ const optionMachine = createMachine(
           () => {
             console.log("就绪状态准备开始");
           },
-          assign({
-            isDialogOpen: true,
-          }),
+          "openDialog",
         ],
         states: {
           idle: {
             on: {
-              start: { target: "tryconnnect", actions: "clearMessage" },
+              start: { target: "tryconnnect" },
               end: [
                 // {
                 //   target: "#optionMachine.unready",
@@ -203,11 +165,7 @@ const optionMachine = createMachine(
                 // },
                 {
                   target: "#optionMachine.unready",
-                  actions: [
-                    "closeWs",
-                    "clearMessage",
-                    assign({ isDialogOpen: false }),
-                  ],
+                  actions: ["closeWs", "closeDialog"],
                 },
               ],
             },
@@ -227,9 +185,6 @@ const optionMachine = createMachine(
                   () => {
                     console.log("start成功");
                   },
-                  assign({
-                    buttonText1: "暂停",
-                  }),
                 ],
               },
               onError: {
@@ -267,11 +222,7 @@ const optionMachine = createMachine(
             },
             {
               target: "#optionMachine.showResult.short",
-              actions: assign({
-                scanResult: (context, event) => {
-                  return event.data.data || [];
-                },
-              }),
+              actions: "setShortResult",
               // cond: "isResultShort",
               // }, {
               // target:'continue'
@@ -336,9 +287,6 @@ const optionMachine = createMachine(
           },
           full: {
             on: {
-              // end: {
-              //   target:''
-              // },
               next: {
                 target: "#optionMachine.clear",
               },
@@ -349,6 +297,7 @@ const optionMachine = createMachine(
       end: {},
       clear: {
         initial: "tryclear",
+        entry: "clearMessage",
         states: {
           waitforclear: {
             on: {
@@ -368,6 +317,7 @@ const optionMachine = createMachine(
                 }
               },
               onDone: {
+                // TODO 没什么要设置的吧
                 actions: assign((context) => {
                   console.log("clear成功");
                   return {};
@@ -404,6 +354,16 @@ const optionMachine = createMachine(
         }
         // return {};
       },
+      openDialog: assign({ isDialogOpen: true }),
+      closeDialog: assign({ isDialogOpen: false }),
+      setWs: assign({
+        ws: (context, event) => event.data,
+      }),
+      setShortResult: assign({
+        scanResult: (context, event) => {
+          return event.data.data || [];
+        },
+      }),
     },
     guards: {
       isWsExist: (context) => {
@@ -429,10 +389,14 @@ const optionMachine = createMachine(
   }
 );
 
+const stateRecord = ref<Array<State>>([]);
 // const { state, send }=useMachine(optionMachine);
 const optionState = ref<any>(getContext());
 const optionServie = interpret(optionMachine)
-  .onTransition((state) => (optionState.value = state))
+  .onTransition((state) => {
+    optionState.value = state;
+    stateRecord.value.push(state.value);
+  })
   .start();
 </script>
 
@@ -499,6 +463,7 @@ const optionServie = interpret(optionMachine)
       </button>
       {{ message }}
     </div>
+    {{ stateRecord }}
   </div>
 </template>
 
